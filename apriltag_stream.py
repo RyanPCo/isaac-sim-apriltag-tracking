@@ -145,7 +145,7 @@ class AprilTagStream:
 
 
 if __name__ == "__main__":
-    stream = AprilTagStream(cam_index=0, fx=800, fy=800, cx=640, cy=360, tag_size=0.04, calib_path="./calibration/calib.npz")
+    stream = AprilTagStream(cam_index=1, fx=800, fy=800, cx=640, cy=360, tag_size=0.04, calib_path="./calibration/calib.npz")
     stream.start()
     last_ts_printed = None
     try:

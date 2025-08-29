@@ -23,7 +23,7 @@ objectPointsArray = []
 imgPointsArray = []
 
 # Loop over the image files
-for path in glob.glob('./calibration/*.jpg'):
+for path in glob.glob('./calibration/cam1/*.jpg'):
     # Load the image and convert it to gray scale
     img = cv2.imread(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -61,7 +61,7 @@ for i in range(len(objectPointsArray)):
 print("Total error: ", error / len(objectPointsArray))
 
 # Load one of the test images
-img = cv2.imread('./calibration/WIN_20250828_10_50_46_Pro.jpg')
+img = cv2.imread('./calibration/cam1/WIN_20250829_08_28_36_Pro.jpg')
 h, w = img.shape[:2]
 
 # Obtain the new camera matrix and undistort the image
