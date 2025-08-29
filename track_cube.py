@@ -37,17 +37,17 @@ from isaaclab.utils.math import subtract_frame_transforms
 from isaaclab_tasks.utils import load_cfg_from_registry
 
 def transform_apriltag_to_world(t_cam_tag, R_cam_tag=None):
-    # Camera coordinate system: +X right, +Y down, +Z forward (into scene)
-    # Simulation world: +X forward, +Y left, +Z up
 
     t_cam = np.asarray(t_cam_tag).reshape(3)
 
     # Scale factor to convert from meters to simulation units
-    scale = 3.0
+    scale = 1.0
+    
+    origin = [2.0, 0.5, 0.0]
 
-    world_x = t_cam[2] * scale
-    world_y = -t_cam[0] * scale
-    world_z = -t_cam[1] * scale
+    world_x = -t_cam[2] * scale + origin[0]
+    world_y = t_cam[0] * scale + origin[1]
+    world_z = -t_cam[1] * scale + origin[2]
 
     world_pos = [world_x, world_y, world_z]
 
@@ -77,7 +77,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, tag
     cube_object = scene["object"]
     
     # Initialize AprilTag stream
-    apriltag_stream = AprilTagStream(cam_index=0, tag_size=tag_size, calib_path="./calibration/calib.npz")
+    apriltag_stream = AprilTagStream(cam_index=1, tag_size=tag_size, calib_path="./calibration/calib.npz")
     apriltag_stream.start()
     print("[INFO]: AprilTag stream started. Press 'q' in the webcam window to stop.")
 
