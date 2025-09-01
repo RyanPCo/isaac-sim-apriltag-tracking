@@ -60,7 +60,7 @@ def capture_calibration_images(camera_index=0):
             # Show confirmation
             cv2.putText(frame, "CAPTURED!", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.imshow('Webcam - Press Enter to Capture', frame)
-            cv2.waitKey(1000)  # Show "CAPTURED!" for 1 second
+            cv2.waitKey(1000)
     
     # Cleanup
     cap.release()
