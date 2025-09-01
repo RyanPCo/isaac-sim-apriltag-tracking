@@ -2,11 +2,6 @@
 """
 Calibrate a personalized palm template from ONE image where the palm is flat on the same plane as an AprilTag.
 Outputs a minimal JSON you can use later to scale MediaPipe 3D and/or build objectPoints for solvePnP.
-
-Requirements:
-- pip install opencv-python mediapipe pupil-apriltags numpy
-- A camera calibration npz at ./webcam/calib.npz with keys: mtx, dist
-- MediaPipe hand_landmarker.task at ../models/hand_landmarker.task
 """
 
 import os, sys, json
@@ -78,9 +73,44 @@ def build_palm_template_m(pts_m):
     P = {k: [float(v[0] - wrist_xy[0]), float(v[1] - wrist_xy[1]), 0.0] for k,v in sel.items()}
     return P
 
+def visualize_detections(img_undist, tag_corners, hand_kps, palm_kps):
+    """Visualize AprilTag corners and hand landmarks on the image."""
+    vis_img = img_undist.copy()
+    
+    # Draw AprilTag corners
+    corners_int = tag_corners.astype(np.int32)
+    cv2.polylines(vis_img, [corners_int], True, (0, 255, 0), 3)  # Green rectangle
+    
+    # Label tag corners
+    corner_labels = ['TL', 'TR', 'BR', 'BL']
+    for i, (corner, label) in enumerate(zip(corners_int, corner_labels)):
+        cv2.putText(vis_img, label, (corner[0] + 10, corner[1] - 10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.circle(vis_img, tuple(corner), 5, (0, 255, 0), -1)
+    
+    # Draw all hand landmarks (small blue dots)
+    for kp in hand_kps:
+        cv2.circle(vis_img, (int(kp[0]), int(kp[1])), 2, (255, 0, 0), -1)
+    
+    # Draw palm landmarks (larger red dots)
+    palm_names = ['Wrist', 'Thumb CMC', 'Index MCP', 'Middle MCP', 'Ring MCP', 'Pinky MCP']
+    for i, (kp, name) in enumerate(zip(palm_kps, palm_names)):
+        cv2.circle(vis_img, (int(kp[0]), int(kp[1])), 8, (0, 0, 255), -1)
+        cv2.putText(vis_img, name, (int(kp[0]) + 15, int(kp[1]) - 15), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    
+    # Draw connections between palm points
+    palm_connections = [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]  # wrist to each finger
+    for start_idx, end_idx in palm_connections:
+        start_pt = palm_kps[start_idx].astype(int)
+        end_pt = palm_kps[end_idx].astype(int)
+        cv2.line(vis_img, tuple(start_pt), tuple(end_pt), (255, 255, 0), 2)
+    
+    return vis_img
+
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python hand_measurement_min.py <image_path> <tag_size_meters>")
+        print("Usage: python hand_measurement.py <image_path> <tag_size_meters>")
         sys.exit(1)
 
     image_path = sys.argv[1]
@@ -107,10 +137,20 @@ def main():
     kps_px = hand_keypoints_px(img_u, hand_detector)              # (21,2) px
     palm_px = kps_px[PALM_IDX]                                   # (6,2) px
 
-    # 4) Warp palm points to metric tag plane (meters)
+    # 4) Visualize detections
+    vis_img = visualize_detections(img_u, corners, kps_px, palm_px)
+    
+    # Display image
+    cv2.namedWindow("Tag and Hand Detection", cv2.WINDOW_NORMAL)
+    cv2.imshow("Tag and Hand Detection", vis_img)
+    print("Close the window when done viewing...")
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # 5) Warp palm points to metric tag plane (meters)
     palm_m = warp_points_to_metric(H, palm_px)                    # (6,2) m, z=0
 
-    # 5) Compute key measurements (meters)
+    # 6) Compute key measurements (meters)
     wrist_m   = palm_m[0]
     thumb_cmc = palm_m[1]
     idx_mcp   = palm_m[2]
@@ -122,10 +162,10 @@ def main():
     palm_length_m  = np.linalg.norm(wrist_m - mid_mcp)
     thumb_index_m  = np.linalg.norm(thumb_cmc - idx_mcp)
 
-    # 6) Build palm template (object points) in a local palm frame
+    # 7) Build palm template (object points) in a local palm frame
     palm_template_m = build_palm_template_m(palm_m)
 
-    # 7) Minimal JSON
+    # 8) Minimal JSON
     out = {
         "source_image": os.path.basename(image_path),
         "tag_size_m": float(tag_size),
@@ -145,7 +185,6 @@ def main():
         "palm_template_m": palm_template_m  # use as objectPoints (z=0) for planar PnP
     }
 
-    os.makedirs("./hand", exist_ok=True)
     out_path = "./hand/measurements.json"
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)

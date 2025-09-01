@@ -1,13 +1,13 @@
 """
 This script demonstrates AprilTag tracking and robot arm control using differential inverse kinematics.
 
-It uses a webcam to track an AprilTag, translates the 3D pose information into a cube in sim,
+It uses a webcam to track an AprilTag and hand pose, translates the 3D pose information into a cube in sim,
 and an absolute inverse kinematics controller to control the Franka's end-effector.
 
 Features:
 - Real-time AprilTag detection from webcam feed
 - Coordinate transformation from camera to simulation world
-- Robot arm control to follow AprilTag movement
+- Robot arm control to follow AprilTag movement and hand pose
 - Visual markers showing current and goal positions
 """
 
@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import time
 from isaaclab.app import AppLauncher
-from apriltag_stream import AprilTagStream
+from camera_stream import CameraStream
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--tag_size", type=float, default=0.07, help="Size of the AprilTag in meters.")
@@ -37,49 +37,64 @@ from isaaclab.utils.math import subtract_frame_transforms
 from isaaclab_tasks.utils import load_cfg_from_registry
 
 def transform_apriltag_to_world(t_cam_tag, R_cam_tag=None):
-
+    """
+    Transform AprilTag camera coordinates to robot world coordinates
+    
+    Args:
+        t_cam_tag: Translation vector from camera to AprilTag
+        R_cam_tag: Rotation matrix from camera to AprilTag (optional)
+        
+    Returns:
+        List of [x, y, z] world coordinates
+    """
     t_cam = np.asarray(t_cam_tag).reshape(3)
 
     # Scale factor to convert from meters to simulation units
     scale = 1.0
     
-    origin = [2.0, 0.5, 0.0]
+    # Origin offset for robot workspace
+    origin = [0.75, 0.0, 1.0]
 
-    world_x = -t_cam[2] * scale + origin[0]
+    world_x = t_cam[1] * scale + origin[0]
     world_y = t_cam[0] * scale + origin[1]
-    world_z = -t_cam[1] * scale + origin[2]
+    world_z = -t_cam[2] * scale + origin[2]
 
     world_pos = [world_x, world_y, world_z]
 
-    # if R_cam_tag is not None:
-    #     try:
-    #         from scipy.spatial.transform import Rotation as R
-    #     except Exception:
-    #         return world_pos
+    return world_pos
 
-    #     T_cam_to_world = np.array([
-    #         [0, 0, 1],   # camera Z -> world X
-    #         [-1, 0, 0],  # camera X -> world -Y
-    #         [0, -1, 0]   # camera Y -> world -Z
-    #     ])
-
-    #     R_world_tag = T_cam_to_world @ R_cam_tag
-    #     r = R.from_matrix(R_world_tag)
-    #     quat_xyzw = r.as_quat()  # [x, y, z, w]
-    #     world_rot = [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]]  # [w, x, y, z]
-
-    #     return world_pos, world_rot
-
+def transform_hand_to_world(wrist_world):
+    """
+    Transform hand world coordinates to robot world coordinates
+    
+    Args:
+        wrist_world: 3D wrist coordinates from hand pose detection
+        
+    Returns:
+        List of [x, y, z] robot world coordinates
+    """
+    # Scale factor to convert from meters to simulation units
+    scale = 1.0
+    
+    origin = [0.75, 0.0, 1.0]
+    
+    world_x = wrist_world[1] * scale + origin[0]
+    world_y = wrist_world[0] * scale + origin[1]
+    world_z = -wrist_world[2] * scale + origin[2]
+    
+    world_pos = [world_x, world_y, world_z]
+    
     return world_pos
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, tag_size: float):
     robot = scene["robot"]
     cube_object = scene["object"]
     
-    # Initialize AprilTag stream
-    apriltag_stream = AprilTagStream(cam_index=1, width=1920, height=1080, tag_size=tag_size, calib_path="./calibration/webcam/calib.npz")
-    apriltag_stream.start()
-    print("[INFO]: AprilTag stream started. Press 'q' in the webcam window to stop.")
+    # Initialize camera stream
+    camera_stream = CameraStream(cam_index=1, width=1920, height=1080, tag_size=tag_size, calib_path="./calibration/webcam/calib.npz")
+    camera_stream.start()
+    print("[INFO]: Camera stream started. Press 'q' in the webcam window to stop.")
+    print("[INFO]: Robot will follow hand pose when detected, AprilTag when no hands visible.")
 
     # Create controller
     diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
@@ -129,15 +144,42 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, tag
     
     # Simulation loop
     while simulation_app.is_running():
-        # Display AprilTag webcam feed
-        if not apriltag_stream.show_video("AprilTag Webcam Feed"):
-            print("[INFO]: Webcam window closed. Stopping simulation.")
-            break
+        # Get latest AprilTag data and hand pose data
+        apriltag_data = camera_stream.apriltag_tracker.get_latest()
+        hand_data = camera_stream.hand_pose_detector.get_latest()
+        
+        # Initialize hand target position for visualization
+        hand_target_pos = None
+        hand_detected = False
+        apriltag_detected = False
+        
+        # Process hand pose data
+        if hand_data is not None and hand_data.get('num_hands', 0) > 0:
+            hand_detected = True
+            hand_detection = hand_data['detections'][0]  # Use first detected hand
+            key_points = hand_detection.get('key_points', {})
             
-        # Get latest AprilTag data
-        apriltag_data = apriltag_stream.get_latest()
+            if 'wrist_world' in key_points:
+                # Extract 3D world coordinates from hand detection
+                wrist_world = key_points['wrist_world']
+                
+                # Transform hand coordinates to robot world coordinates
+                world_pos = transform_hand_to_world(wrist_world)
+                hand_target_pos = torch.tensor(world_pos, device=sim.device, dtype=torch.float32)
+                
+                # Update end-effector goal to follow hand
+                ee_goal[:3] = hand_target_pos
+                ik_commands[:] = ee_goal
+                diff_ik_controller.set_command(ik_commands)
+                
+                # Print hand tracking info every 30 frames
+                if count % 30 == 0:
+                    print(f"Hand (camera): [{wrist_world[0]:.3f}, {wrist_world[1]:.3f}, {wrist_world[2]:.3f}] m")
+                    print(f"Robot target (world): [{world_pos[0]:.3f}, {world_pos[1]:.3f}, {world_pos[2]:.3f}] m")
+        
+        # Process AprilTag data
         if apriltag_data is not None:
-            # Extract translation (and rotation if available) from AprilTag
+            apriltag_detected = True
             t_cam_tag = apriltag_data["t_cam_tag"]
             R_cam_tag = apriltag_data.get("R_cam_tag", None)
 
@@ -156,18 +198,23 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, tag
                 torch.tensor([new_cube_pos[0], new_cube_pos[1], new_cube_pos[2], 1.0, 0.0, 0.0, 0.0], device=sim.device, dtype=torch.float32).unsqueeze(0)
             )
 
-            # Update the end-effector goal to follow the cube (0.15m above)
-            ee_goal[:3] = new_cube_pos + torch.tensor([0.0, 0.0, 0.15], device=sim.device)
-            ik_commands[:] = ee_goal
+            # If no hand detected, use AprilTag for robot control
+            if not hand_detected:
+                # Update the end-effector goal to follow the cube (0.15m above)
+                ee_goal[:3] = new_cube_pos + torch.tensor([0.0, 0.0, 0.15], device=sim.device)
+                ik_commands[:] = ee_goal
+                diff_ik_controller.set_command(ik_commands)
 
-            # Update controller target with the latest command
-            diff_ik_controller.set_command(ik_commands)
-
-            # Print positions every 30 frames
+            # Print tracking info every 30 frames
             if count % 30 == 0:
                 t = np.asarray(t_cam_tag).reshape(-1)
                 print(f"AprilTag (camera) t: [{t[0]:.3f}, {t[1]:.3f}, {t[2]:.3f}]")
                 print(f"Cube (world): [{new_cube_pos[0]:.3f}, {new_cube_pos[1]:.3f}, {new_cube_pos[2]:.3f}]")
+        
+        # Display camera feed with AprilTag detection and hand target
+        if not camera_stream.show_video("Webcam Feed"):
+            print("[INFO]: Webcam window closed. Stopping simulation.")
+            break
         
         # continuously compute IK
         jacobian = robot.root_physx_view.get_jacobians()[:, ee_jacobi_idx, :, robot_entity_cfg.joint_ids]
@@ -200,7 +247,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, tag
         # Small delay to allow webcam processing
         time.sleep(0.01)
     
-    apriltag_stream.stop()
+    camera_stream.stop()
     cv2.destroyAllWindows()
 
 
@@ -220,7 +267,9 @@ def main():
     sim.reset()
 
     print("[INFO]: Setup complete...")
-    print("[INFO]: AprilTag integration enabled. The cube will follow your AprilTag movement.")
+    print("[INFO]: Hand pose + AprilTag integration enabled.")
+    print("[INFO]: Robot will follow your hand movements when detected.")
+    print("[INFO]: Falls back to AprilTag tracking when no hands visible.")
     print(f"[INFO]: Using AprilTag size: {args_cli.tag_size} meters")
 
     run_simulator(sim, scene, args_cli.tag_size)
