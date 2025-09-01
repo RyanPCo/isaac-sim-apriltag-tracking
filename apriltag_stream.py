@@ -3,12 +3,15 @@ import cv2, threading, time, numpy as np
 from pupil_apriltags import Detector
 
 class AprilTagStream:
-    def __init__(self, cam_index=0, fx=800, fy=800, cx=640, cy=360, tag_size=0.07, calib_path="./calibration/calib.npz"):
+    def __init__(self, cam_index=0, width=1920, height=1080, tag_size=0.07, calib_path="./calibration/webcam/calib.npz"):
         self.cap = cv2.VideoCapture(cam_index)
+        # Set camera resolution
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.detector = Detector(families="tag36h11", nthreads=1, refine_edges=True)
 
-        # Default intrinsics
-        K = np.array([[fx,0,cx],[0,fy,cy],[0,0,1]], dtype=np.float32)
+        # Default intrinsics (will be overridden by calibration)
+        K = np.array([[width,0,width//2],[0,height,height//2],[0,0,1]], dtype=np.float32)
         dist = np.zeros(5, dtype=np.float32)
 
         # Try to load calibration if available
@@ -132,6 +135,8 @@ class AprilTagStream:
 
     def show_video(self, window_name="AprilTag Detection"):
         try:
+            # Make window resizable
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
             frame = self.get_latest_frame()
             if frame is not None:
                 cv2.imshow(window_name, frame)
@@ -145,14 +150,14 @@ class AprilTagStream:
 
 
 if __name__ == "__main__":
-    stream = AprilTagStream(cam_index=1, fx=800, fy=800, cx=640, cy=360, tag_size=0.04, calib_path="./calibration/calib.npz")
+    stream = AprilTagStream(cam_index=1, width=1920, height=1080, tag_size=0.07, calib_path="./calibration/webcam/calib.npz")
     stream.start()
     last_ts_printed = None
     try:
         while True:
-            frame = stream.get_latest_frame()
-            if frame is not None:
-                cv2.imshow("AprilTag Stream", frame)
+            # Use show_video method which handles resizable window
+            if not stream.show_video("AprilTag Stream"):
+                break
             latest = stream.get_latest()
             if latest is not None:
                 ts = latest.get("ts", None)
@@ -161,9 +166,6 @@ if __name__ == "__main__":
                     t = latest["t_cam_tag"].reshape(-1)
                     print(f"ts={ts:.3f} R=\n{R}\n t=[{t[0]:.4f}, {t[1]:.4f}, {t[2]:.4f}] m")
                     last_ts_printed = ts
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
             time.sleep(0.005)
     finally:
         stream.stop()
