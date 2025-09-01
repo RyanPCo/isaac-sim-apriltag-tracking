@@ -77,7 +77,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, tag
     cube_object = scene["object"]
     
     # Initialize AprilTag stream
-    apriltag_stream = AprilTagStream(cam_index=1, tag_size=tag_size, calib_path="./calibration/calib.npz")
+    apriltag_stream = AprilTagStream(cam_index=1, width=1920, height=1080, tag_size=tag_size, calib_path="./calibration/webcam/calib.npz")
     apriltag_stream.start()
     print("[INFO]: AprilTag stream started. Press 'q' in the webcam window to stop.")
 

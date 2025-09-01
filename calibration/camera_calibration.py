@@ -6,6 +6,8 @@
 import numpy as np
 import cv2
 import glob
+import argparse
+import sys
 
 # Define the chess board rows and columns
 rows = 8
@@ -22,8 +24,17 @@ objectPoints[:, :2] = np.mgrid[0:rows, 0:cols].T.reshape(-1, 2)
 objectPointsArray = []
 imgPointsArray = []
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Camera calibration using chessboard images')
+parser.add_argument('--photos-dir', '-p', type=str, default='./webcam',
+                   help='Directory containing calibration images (default: ./webcam)')
+parser.add_argument('--output', '-o', type=str, default='./calib.npz',
+                   help='Output file for calibration data (default: ./calib.npz)')
+
+args = parser.parse_args()
+
 # Loop over the image files
-for path in glob.glob('./calibration/cam1/*.jpg'):
+for path in glob.glob(f'{args.photos_dir}/*.jpg'):
     # Load the image and convert it to gray scale
     img = cv2.imread(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -49,7 +60,7 @@ for path in glob.glob('./calibration/cam1/*.jpg'):
 
 # Calibrate the camera and save the results
 ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objectPointsArray, imgPointsArray, gray.shape[::-1], None, None)
-np.savez('./calibration/calib.npz', mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
+np.savez(f'./{args.photos_dir}/{args.output}', mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
 
 # Print the camera calibration error
 error = 0
@@ -61,18 +72,17 @@ for i in range(len(objectPointsArray)):
 print("Total error: ", error / len(objectPointsArray))
 
 # Load one of the test images
-img = cv2.imread('./calibration/cam1/WIN_20250829_08_28_36_Pro.jpg')
-h, w = img.shape[:2]
+test_images = glob.glob(f'{args.photos_dir}/*.jpg')
+if test_images:
+    img = cv2.imread(test_images[0])
+    h, w = img.shape[:2]
 
-# Obtain the new camera matrix and undistort the image
-newCameraMtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w, h), 1, (w, h))
-undistortedImg = cv2.undistort(img, mtx, dist, None, newCameraMtx)
+    # Obtain the new camera matrix and undistort the image
+    newCameraMtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w, h), 1, (w, h))
+    undistortedImg = cv2.undistort(img, mtx, dist, None, newCameraMtx)
 
-# Crop the undistorted image
-# x, y, w, h = roi
-# undistortedImg = undistortedImg[y:y + h, x:x + w]
-
-# Display the final result
-cv2.imshow('chess board', np.hstack((img, undistortedImg)))
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    # Display the final result
+    cv2.imshow('Original vs Undistorted', np.hstack((img, undistortedImg)))
+    cv2.waitKey(0)
+else:
+    print("No test images found for undistortion demo")
